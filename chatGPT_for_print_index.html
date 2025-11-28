@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTMLクリーンアップツール（Web版）</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 50px;
+            text-align: center;
+        }
+        #drop-zone {
+            border: 2px dashed #ccc;
+            padding: 40px;
+            margin-top: 20px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        #drop-zone:hover {
+            border-color: #007bff;
+        }
+        #file-input {
+            display: none;
+        }
+        .message {
+            margin-top: 20px;
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>ChatGPT印刷用ファイル作成</h1>
+    <p>ChatGPTのチャットが長くなり、１ページに収まらないときに一括して印刷することができる機能です</p>
+    <p>(ChatGPTはページに収まっていない表示されていない範囲が読み込まれない仕様のため印刷ができません)</p>
+    <br>
+    <p>該当チャットをページ上で右クリックでローカルに保存し、</p>
+    <p>ローカルのHTMLファイルを選択すると、印刷用に不要な要素を削除・修正し、新しいファイルをダウンロードします。</p>
+    <p>印刷する際は、元ファイルを削除する前に印刷してください</p>
+    <p>元ファイルと一緒に保存されたフォルダ内のスタイルシート(css)を参照しています</p>
+
+    <div id="drop-zone">
+        <label for="file-input">
+            <p>ここにHTMLファイルをドラッグ＆ドロップ</p>
+            <p>または</p>
+            <button onclick="document.getElementById('file-input').click(); return false;">ファイルを選択</button>
+        </label>
+    </div>
+    <input type="file" id="file-input" accept=".html">
+
+    <p id="status-message" class="message">ファイルを選択してください。</p>
+
+    <script>
+        // DOMContentLoaded後に処理を実行
+        document.addEventListener('DOMContentLoaded', () => {
+            const fileInput = document.getElementById('file-input');
+            const dropZone = document.getElementById('drop-zone');
+            const statusMessage = document.getElementById('status-message');
+
+            // ファイル選択時のイベントリスナー
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    processFile(file);
+                }
+            });
+
+            // ドラッグ&ドロップのイベント設定
+            ['dragover', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }, false);
+            });
+            dropZone.addEventListener('drop', (e) => {
+                const file = e.dataTransfer.files[0];
+                if (file && file.name.toLowerCase().endsWith('.html')) {
+                    processFile(file);
+                } else {
+                    statusMessage.textContent = 'エラー: HTMLファイルを選択してください。';
+                    statusMessage.style.color = 'red';
+                }
+            });
+            
+            // ファイル処理のメイン関数
+            function processFile(file) {
+                statusMessage.textContent = `ファイルを読み込み中... (${file.name})`;
+                statusMessage.style.color = '#333';
+
+                const reader = new FileReader();
+
+                reader.onload = (event) => {
+                    const originalHtml = event.target.result;
+                    let cleanedHtml;
+
+                    try {
+                        // **Pythonのclean_html関数に相当する処理**
+                        cleanedHtml = cleanHtml(originalHtml);
+                        
+                        // ダウンロード処理
+                        const newFileName = "印刷用_" + file.name;
+                        downloadHtml(cleanedHtml, newFileName);
+
+                        statusMessage.textContent = `✅ 処理が完了しました。「 ${newFileName} 」としてダウンロードされました。`;
+                        statusMessage.style.color = 'green';
+                        
+                    } catch (error) {
+                        statusMessage.textContent = `処理中にエラーが発生しました: ${error.message}`;
+                        statusMessage.style.color = 'red';
+                        console.error(error);
+                    }
+                };
+
+                reader.onerror = () => {
+                    statusMessage.textContent = 'ファイルの読み込みに失敗しました。';
+                    statusMessage.style.color = 'red';
+                };
+
+                // ファイルをテキストとして読み込む
+                reader.readAsText(file, 'utf-8');
+            }
+            
+            // Pythonのclean_html関数をJavaScriptで再現
+            function cleanHtml(htmlString) {
+                // DOMParserを使ってHTML文字列をDOMオブジェクトに変換（BeautifulSoupの役割）
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlString, 'text/html');
+
+                // 1. 折りたたまれてる部分を表示させる（display: none → block）
+                doc.querySelectorAll('[style]').forEach(el => {
+                    if (el.getAttribute('style').includes('display: none')) {
+                        el.style.display = 'block';
+                    }
+                });
+
+                // 2. hiddenクラスなどで非表示のものも強制表示
+                doc.querySelectorAll(".hidden, .collapsed, .folded").forEach(el => {
+                    el.style.setProperty('display', 'block', 'important');
+                });
+
+                // 3. "コンテンツへとスキップする" のテキストを持つ<a>タグを探して削除
+                doc.querySelectorAll("a").forEach(aTag => {
+                    if (aTag.textContent.trim() === "コンテンツへとスキップする") {
+                        aTag.remove();
+                    }
+                });
+
+                // 4. 左側のチャットリスト欄を削除 (id="stage-slideover-sidebar")
+                const sidebarDiv = doc.getElementById("stage-slideover-sidebar");
+                if (sidebarDiv) {
+                    sidebarDiv.remove();
+                }
+
+                // 5. <textarea> のうち name="prompt-textarea" かつ placeholder="質問してみましょう" を削除
+                doc.querySelectorAll('textarea[name="prompt-textarea"][placeholder="質問してみましょう"]').forEach(el => el.remove());
+
+                // 6. <p> のうち data-placeholder="質問してみましょう" を削除
+                doc.querySelectorAll('p[data-placeholder="質問してみましょう"]').forEach(el => el.remove());
+                
+                // 7. すべてのボタンを削除
+                doc.querySelectorAll("button").forEach(el => el.remove());
+                
+                // 8. すべてのアイコンを削除
+                doc.querySelectorAll("svg.icon").forEach(el => el.remove());
+                
+                // 9. <div id="thread-bottom-container"> を完全削除
+                const threadBottom = doc.getElementById("thread-bottom-container");
+                if (threadBottom) {
+                    threadBottom.remove();
+                }
+
+                // 10. √記号の横棒（svg）の幅が異常に長いため制限
+                doc.querySelectorAll("svg[width]").forEach(svg => {
+                    const widthValue = svg.getAttribute("width");
+                    if (widthValue && widthValue.endsWith("em")) {
+                        try {
+                            const num = parseFloat(widthValue.replace("em", ""));
+                            if (num > 20) {
+                                svg.setAttribute("width", "5em"); // 最大幅を5em程度に制限
+                            }
+                        } catch (e) {
+                            // 幅の解析に失敗しても無視 (Pythonのtry-exceptに対応)
+                        }
+                    }
+                });
+                
+                // 11. canvasの文字重なり対応 / popoverなどJS依存構造の解除
+                doc.querySelectorAll('.popover').forEach(tag => {
+                    // tag.unwrap()に相当: 子要素を残して親要素を削除
+                    while (tag.firstChild) {
+                        tag.parentNode.insertBefore(tag.firstChild, tag);
+                    }
+                    tag.remove();
+                });
+
+                // 12. prosemirrorなどのJS ID削除
+                doc.querySelectorAll('[id]').forEach(tag => {
+                    if (tag.id.startsWith("prosemirror")) {
+                        tag.removeAttribute("id");
+                    }
+                });
+
+                // 13. scriptやcanvas削除
+                doc.querySelectorAll("script, canvas").forEach(el => el.remove());
+                
+                // 14. 印刷用スタイルタグの追加
+                const styleContent = `
+@media print {
+    /* ページ分割防止 */
+    .page-break { page-break-before: always; }
+    * { overflow: visible !important; }
+    html, body { height: auto !important; overflow: visible !important; }
+
+    /* √記号の横棒の幅を制限 */
+    .katex .hide-tail {
+        width: 100% !important; 
+        max-width: 100% !important;
+        overflow: hidden !important;
+    }
+    .katex .hide-tail svg {
+        width: 100% !important;
+        height: auto !important;
+    }
+}`;
+                const styleTag = doc.createElement("style");
+                styleTag.textContent = styleContent;
+                doc.head.appendChild(styleTag);
+                
+                // 修正後のHTML全体を文字列として返す
+                // DOMオブジェクト全体をシリアライズする
+                return '<!DOCTYPE html>\n' + doc.documentElement.outerHTML;
+            }
+
+            // ファイルダウンロード処理（Pythonのファイル書き出しに相当）
+            function downloadHtml(content, filename) {
+                const blob = new Blob([content], { type: 'text/html;charset=utf-8' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }
+        });
+    </script>
+</body>
+</html>
